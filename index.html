@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>たまごサバイバル</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{
+margin:0;width:100%;height:100%;overflow:hidden;
+touch-action:none;font-family:sans-serif;background:#87ceeb;
+}
+.screen{
+width:100%;height:100%;display:none;flex-direction:column;
+align-items:center;justify-content:center;padding:20px;text-align:center;
+}
+.screen.active{display:flex}
+button{
+min-width:180px;min-height:60px;border:none;border-radius:16px;
+font-size:22px;font-weight:bold;background:#ffb300;color:#fff;
+}
+#gameScreen{padding:0}
+#hud{
+width:100%;display:flex;justify-content:space-between;
+padding:10px 14px;font-size:20px;font-weight:bold;
+background:#ffffffcc;
+}
+#gameArea{
+position:relative;flex:1;width:100%;overflow:hidden;
+background:linear-gradient(#9be7ff,#dff8ff 70%,#9be26d 70%,#78c850);
+}
+#player{
+position:absolute;width:54px;height:54px;font-size:48px;
+line-height:54px;text-align:center;user-select:none;
+}
+.obstacle{position:absolute;user-select:none}
+#difficulty,#speedLevel{
+position:absolute;color:#fff;background:#00000088;
+padding:4px 12px;border-radius:999px;font-size:14px;
+}
+#difficulty{top:8px;left:50%;transform:translateX(-50%)}
+#speedLevel{top:40px;left:50%;transform:translateX(-50%)}
+#boostEffect{
+position:absolute;
+top:50%;left:50%;
+transform:translate(-50%,-50%);
+font-size:38px;
+font-weight:bold;
+color:#ff1744;
+display:none;
+pointer-events:none;
+text-shadow:2px 2px 4px #fff;
+}
+#resultRank{font-size:42px;margin:10px;font-weight:bold}
+.desc{max-width:500px;line-height:1.8}
+</style>
+</head>
+<body>
+
+<div id="startScreen" class="screen active">
+<h1>🥚たまごサバイバル</h1>
+<div class="desc">
+たまごをドラッグして障害物をよけよう！<br>
+時間が進むと難しくなる！<br>
+さらにスピードアップで移動力アップ！
+</div>
+<br>
+<button id="startBtn">スタート</button>
+</div>
+
+<div id="gameScreen" class="screen">
+<div id="hud">
+<div>スコア: <span id="score">0</span></div>
+<div>残り: <span id="time">60</span>秒</div>
+</div>
+
+<div id="gameArea">
+<div id="difficulty">かんたん</div>
+<div id="speedLevel">速度Lv.1</div>
+<div id="boostEffect">SPEED UP!</div>
+<div id="player">🥚</div>
+</div>
+</div>
+
+<div id="resultScreen" class="screen">
+<h1>結果発表</h1>
+<div style="font-size:28px">最終スコア</div>
+<div id="finalScore" style="font-size:50px;font-weight:bold">0</div>
+<div id="resultRank">B</div>
+<button id="restartBtn">もう一度遊ぶ</button>
+</div>
+
+<script>
+const startScreen=document.getElementById("startScreen");
+const gameScreen=document.getElementById("gameScreen");
+const resultScreen=document.getElementById("resultScreen");
+const player=document.getElementById("player");
+const gameArea=document.getElementById("gameArea");
+const scoreEl=document.getElementById("score");
+const timeEl=document.getElementById("time");
+const difficultyEl=document.getElementById("difficulty");
+const speedLevelEl=document.getElementById("speedLevel");
+const boostEffect=document.getElementById("boostEffect");
+const finalScoreEl=document.getElementById("finalScore");
+const resultRankEl=document.getElementById("resultRank");
+
+let gameRunning=false;
+let score=0;
+let timeLeft=60;
+let playerX=0;
+let playerY=0;
+let moveMultiplier=1;
+let speedLevel=1;
+let obstacles=[];
+let spawnTimer=0;
+let animationId;
+let lastTime=0;
+let secondTimer=0;
+
+function showScreen(screen){
+[startScreen,gameScreen,resultScreen].forEach(s=>s.classList.remove("active"));
+screen.classList.add("active");
+}
+
+function updatePlayer(){
+player.style.left=playerX+"px";
+player.style.top=playerY+"px";
+}
+
+function resetGame(){
+obstacles.forEach(o=>o.el.remove());
+obstacles=[];
+score=0;
+timeLeft=60;
+moveMultiplier=1;
+speedLevel=1;
+
+scoreEl.textContent=0;
+timeEl.textContent=60;
+speedLevelEl.textContent="速度Lv.1";
+
+const rect=gameArea.getBoundingClientRect();
+playerX=rect.width/2-27;
+playerY=rect.height-90;
+updatePlayer();
+}
+
+function createObstacle(){
+const rect=gameArea.getBoundingClientRect();
+const el=document.createElement("div");
+el.className="obstacle";
+
+const icons=["🪨","🌵","🔥","⚡","🧱","💣"];
+el.textContent=icons[Math.floor(Math.random()*icons.length)];
+
+const size=34+Math.random()*22;
+el.style.fontSize=size+"px";
+
+const x=Math.random()*(rect.width-size);
+
+gameArea.appendChild(el);
+
+obstacles.push({
+el,x,y:-60,size,speed:0
+});
+}
+
+function getDifficulty(progress){
+if(progress<0.25)return{label:"かんたん",speed:3,spawn:900};
+if(progress<0.5)return{label:"ふつう",speed:5,spawn:650};
+if(progress<0.75)return{label:"むずかしい",speed:7,spawn:450};
+return{label:"超難しい",speed:10,spawn:260};
+}
+
+function collide(a,b){
+return a.x<b.x+b.w &&
+a.x+a.w>b.x &&
+a.y<b.y+b.h &&
+a.y+a.h>b.y;
+}
+
+function showBoost(){
+boostEffect.style.display="block";
+setTimeout(()=>boostEffect.style.display="none",1000);
+}
+
+function endGame(reason){
+gameRunning=false;
+cancelAnimationFrame(animationId);
+
+let rank="C";
+if(score>=600)rank="S";
+else if(score>=450)rank="A";
+else if(score>=300)rank="B";
+
+rank+=reason==="clear"?" (クリア)":" (ゲームオーバー)";
+
+finalScoreEl.textContent=score;
+resultRankEl.textContent=rank;
+showScreen(resultScreen);
+}
+
+function gameLoop(timestamp){
+
+if(!gameRunning)return;
+if(!lastTime)lastTime=timestamp;
+
+const delta=timestamp-lastTime;
+lastTime=timestamp;
+
+const progress=(60-timeLeft)/60;
+const diff=getDifficulty(progress);
+
+difficultyEl.textContent=diff.label;
+
+spawnTimer+=delta;
+
+if(spawnTimer>=diff.spawn){
+spawnTimer=0;
+createObstacle();
+}
+
+secondTimer+=delta;
+
+if(secondTimer>=1000){
+secondTimer-=1000;
+
+timeLeft--;
+score+=10;
+
+scoreEl.textContent=score;
+timeEl.textContent=timeLeft;
+
+if(timeLeft>0 && timeLeft%15===0){
+speedLevel++;
+moveMultiplier+=0.25;
+speedLevelEl.textContent="速度Lv."+speedLevel;
+showBoost();
+}
+
+if(timeLeft<=0){
+endGame("clear");
+return;
+}
+}
+
+const rect=gameArea.getBoundingClientRect();
+
+const playerBox={
+x:playerX,y:playerY,w:54,h:54
+};
+
+for(let i=obstacles.length-1;i>=0;i--){
+
+const o=obstacles[i];
+
+o.speed=diff.speed+Math.random()*2;
+o.y+=o.speed;
+
+o.el.style.left=o.x+"px";
+o.el.style.top=o.y+"px";
+
+const obsBox={
+x:o.x+8,
+y:o.y+8,
+w:o.size-16,
+h:o.size-16
+};
+
+if(collide(playerBox,obsBox)){
+endGame("hit");
+return;
+}
+
+if(o.y>rect.height+80){
+o.el.remove();
+obstacles.splice(i,1);
+score+=2;
+scoreEl.textContent=score;
+}
+}
+
+animationId=requestAnimationFrame(gameLoop);
+}
+
+function startGame(){
+resetGame();
+showScreen(gameScreen);
+gameRunning=true;
+lastTime=0;
+secondTimer=0;
+spawnTimer=0;
+animationId=requestAnimationFrame(gameLoop);
+}
+
+document.getElementById("startBtn").addEventListener("click",startGame);
+document.getElementById("restartBtn").addEventListener("click",startGame);
+
+function movePlayer(clientX,clientY){
+
+if(!gameRunning)return;
+
+const rect=gameArea.getBoundingClientRect();
+
+const targetX=clientX-rect.left-27;
+const targetY=clientY-rect.top-27;
+
+playerX+=(targetX-playerX)*(0.35*moveMultiplier);
+playerY+=(targetY-playerY)*(0.35*moveMultiplier);
+
+playerX=Math.max(0,Math.min(rect.width-54,playerX));
+playerY=Math.max(0,Math.min(rect.height-54,playerY));
+
+updatePlayer();
+}
+
+gameArea.addEventListener("pointerdown",e=>{
+movePlayer(e.clientX,e.clientY);
+});
+
+gameArea.addEventListener("pointermove",e=>{
+if(e.buttons||e.pointerType==="touch"){
+movePlayer(e.clientX,e.clientY);
+}
+});
+
+window.addEventListener("resize",()=>{
+if(gameRunning){
+const rect=gameArea.getBoundingClientRect();
+playerX=Math.min(playerX,rect.width-54);
+playerY=Math.min(playerY,rect.height-54);
+updatePlayer();
+}
+});
+</script>
+
+</body>
+</html>
